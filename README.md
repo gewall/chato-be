@@ -1,3 +1,3 @@
 # chato-be
 
-### npm install
+### `npm install`
