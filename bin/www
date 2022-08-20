@@ -7,7 +7,11 @@
 var app = require("../app");
 var debug = require("debug")("chato-api:server");
 var http = require("http");
-var server = require("socket.io");
+var { Server } = require("socket.io");
+
+const { Op } = require("sequelize");
+var db = require("../models");
+var Chat = db.Chat;
 
 /**
  * Get port from environment and store in Express.
@@ -21,10 +25,74 @@ app.set("port", port);
  */
 
 var server = http.createServer(app);
+var io = new Server(server, {
+  cors: {
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST"],
+  },
+});
 
 /**
  * Listen on provided port, on all network interfaces.
  */
+let users = [];
+
+const pushUser = ({ token, id }) => {
+  if (users.some((item) => item.id === id)) {
+    if (id) {
+      const _users = users.filter((item) => item.id !== id);
+      users = _users;
+      return users.push({ token, id });
+    }
+  }
+  if (id) return users.push({ token, id });
+};
+
+const removeUser = (id) => {
+  users = users.filter((item) => item.token !== id);
+};
+
+const getUser = (id) => {
+  return users.find((item) => item.id === id);
+};
+
+io.on("connection", async (socket) => {
+  socket.on("join", ({ id, ioToken }) => {
+    pushUser({ token: ioToken, id });
+    console.log(users);
+  });
+
+  io.emit("receive_users", users);
+
+  // socket.on("receive_message", async ({ tokenIo, fromId, toId }) => {
+  // const chats = await Chat.findAll({
+  //   where: {
+  //     [Op.or]: [
+  //       { fromId: fromId || "", toId: toId || "" },
+  //       { fromId: toId || "", toId: fromId || "" },
+  //     ],
+  //   },
+  // });
+  //   io.emit("newMessage", { chat: chats });
+
+  //   // console.log(tokenIo, "token");
+  // });
+  socket.on("sendMessage", async ({ data, tokenIo }) => {
+    await Chat.create({ ...data });
+    const user = getUser(data.toId);
+    // const chats = await Chat.findAll({ where: { ...data } });
+    console.log(user);
+    io.to(user?.token).emit("newMessage", { chat: [{ ...data }] });
+    io.to(socket.id).emit("newMessage", { chat: [{ ...data }] });
+  });
+
+  socket.on("disconnect", (reas) => {
+    removeUser(socket.id);
+
+    console.log(users, "dc");
+    io.emit("receive_users", users);
+  });
+});
 
 server.listen(port);
 server.on("error", onError);
@@ -66,11 +134,9 @@ function onError(error) {
     case "EACCES":
       console.error(bind + " requires elevated privileges");
       process.exit(1);
-      break;
     case "EADDRINUSE":
       console.error(bind + " is already in use");
       process.exit(1);
-      break;
     default:
       throw error;
   }
